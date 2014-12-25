@@ -1,1 +1,7 @@
 Gutenberg Book Search.alfredworkflow.zip
+.DS_Store
+fts.sublime-project
+fts.sublime-workspace
+src/.6992615772209684672.db
+*.pyc
+src/dev.py
