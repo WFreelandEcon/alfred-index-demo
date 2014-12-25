@@ -44,8 +44,6 @@ def create_index_db():
     con = sqlite3.connect(INDEX_DB)
     with con:
         cur = con.cursor()
-        # cur.execute(
-        #     "CREATE TABLE books(id INT, author TEXT, title TEXT, url TEXT)")
         cur.execute(
             "CREATE VIRTUAL TABLE books USING fts3(id, author, title, url)")
 
