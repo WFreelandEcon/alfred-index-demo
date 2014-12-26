@@ -9,6 +9,7 @@ import os.path
 import sqlite3
 
 import text
+from fts import FTSDatabase
 from workflow import Workflow
 
 WF = Workflow()
@@ -41,59 +42,38 @@ class FTSFilter(object):
     def __init__(self, data):
         self.data = data
 
-    @property
-    def sql_select(self):
-        # nested SELECT to keep from calling the rank function
-        # multiple times per row.
-        elements = ('SELECT id, score, data FROM',
-                    '(SELECT rank(matchinfo(filter))',
-                    'AS score, id, data',
-                    'FROM filter',
-                    'WHERE filter MATCH "{}")',
-                    'ORDER BY score DESC;')
-        return ' '.join(elements)
-
     def filter(self, query, key=lambda x: x,
                include_score=False, max_results=0, fold_diacritics=True,
                ascending=True, match_on=MATCH_ALL):
         database = self._memoize_database(self.data)
-        # If this item set not searched before, create FTS database
-        if not os.path.exists(database):
-            self._create_index_db(database, key)
-
-        con = sqlite3.connect(database)
-        # Row provides both index-based and case-insensitive name-based access
-        # to columns with almost no memory overhead
-        con.row_factory = sqlite3.Row
+        fts = FTSDatabase(database)
 
         results = {}
         matched = []
-        with con:
-            # Add ranking function to database connection
-            con.create_function('rank', 1, self.make_rank_func((0, 1.0)))
-            cur = con.cursor()
-            words = [s.strip() for s in query.split(' ')]
-            # Search this virtual table using the various match patters
-            # This part of the function will be greatly refactored.
-            if match_on & MATCH_SUBSTRING:
-                sql_query = ' '.join([w + '*' for w in words])
-                matches = self._fetch_match(sql_query, cur)
-                #print(sql_query, len(matches))
-                matched += [list(m) + [MATCH_SUBSTRING] for m in matches]
-            if match_on & MATCH_STARTSWITH:
-                sql_query = '^' + ' '.join(words)
-                matches = self._fetch_match(sql_query, cur)
-                #print(sql_query, len(matches))
-                matched += [list(m) + [MATCH_STARTSWITH] for m in matches]
-            if match_on & MATCH_ATOM:
-                sql_query = ' '.join(words)
-                matches = self._fetch_match(sql_query, cur)
-                #print(sql_query, len(matches))
-                matched += [list(m) + [MATCH_ATOM] for m in matches]
+        words = [s.strip() for s in query.split(' ')]
+        # Search this virtual table using the various match patters
+        # This part of the function will be greatly refactored.
+        if match_on & MATCH_SUBSTRING:
+            # not fully implemented
+            # won't match `x{query}z`
+            sql_query = ' '.join([w + '*' for w in words])
+            matches = fts.search(sql_query)
+            matched += [list(m) + [MATCH_SUBSTRING] for m in matches]
+        if match_on & MATCH_STARTSWITH:
+            sql_query = '^' + ' '.join(words)
+            matches = fts.search(sql_query)
+            matched += [list(m) + [MATCH_STARTSWITH] for m in matches]
+        if match_on & MATCH_ATOM:
+            sql_query = ' '.join(words)
+            matches = fts.search(sql_query)
+            matched += [list(m) + [MATCH_ATOM] for m in matches]
 
+        queue = set()
         for item in matched:
-            id_, score, data, flag = item
-            results[(score, id_)] = (data, (score * 1000), flag)
+            score, id_, data, flag = item
+            if id_ not in queue:
+                results[(score, id_)] = (data, (score * 1000), flag)
+                queue.add(id_)
 
         # sort on keys, then discard the keys
         keys = sorted(results.keys(), reverse=ascending)
@@ -116,62 +96,6 @@ class FTSFilter(object):
         # Save the database file so that successive searches on the same
         # dataset have the data cached (in sqlite format), for speed.
         return WF.workflowfile(hidden_db)
-
-    def _create_index_db(self, database, key):
-        con = sqlite3.connect(database)
-        with con:
-            cur = con.cursor()
-            # Create the FTS virtual table with only two columns:
-            # id and data, where `data` is the search string key
-            # and `id` is simply a unique id
-            # At some later date, I'd like to add the ability to customize
-            # the columns if you have structured data (like a dict)...
-            cur.execute("""CREATE VIRTUAL TABLE filter
-                           USING fts3(id, data)""")
-            # Add the data to the virtual table
-            for i, item in enumerate(self.data):
-                value = key(item).strip()
-                if value == '':
-                    continue
-                cur.execute("""INSERT OR IGNORE INTO
-                            filter (id, data)
-                            VALUES (?, ?)
-                            """, (i, value))
-
-    def _fetch_match(self, sql_query, cur):
-        sql_query = self.sql_select.format(sql_query)
-        print(sql_query)
-        cur.execute(sql_query)
-        return cur.fetchall()
-
-    def make_rank_func(self, weights):
-        """Search ranking function.
-
-        Use floats (1.0 not 1) for more accurate results. Use 0 to ignore a
-        column.
-
-        Adapted from <http://goo.gl/4QXj25> and <http://goo.gl/fWg25i>
-
-        :param weights: list or tuple of the relative ranking per column.
-        :type weights: :class:`tuple` OR :class:`list`
-        :returns: a function to rank SQLITE FTS results
-        :rtype: :class:`function`
-
-        """
-        def rank(matchinfo):
-            """
-            `matchinfo` is defined as returning 32-bit unsigned integers in
-            machine byte order (see http://www.sqlite.org/fts3.html#matchinfo)
-            and `struct` defaults to machine byte order.
-            """
-            bufsize = len(matchinfo)  # Length in bytes.
-            matchinfo = [struct.unpack(b'I', matchinfo[i:i + 4])[0]
-                         for i in range(0, bufsize, 4)]
-            it = iter(matchinfo[2:])
-            return sum(x[0] * w / x[1]
-                       for x, w in zip(zip(it, it, it), weights)
-                       if x[1])
-        return rank
 
 
 class IterFilter(object):
