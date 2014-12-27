@@ -3,16 +3,17 @@
 from __future__ import print_function, unicode_literals
 
 import re
-import struct
 import string
-import os.path
-import sqlite3
 
 import text
 from fts import FTSDatabase
 from workflow import Workflow
 
 WF = Workflow()
+
+# TODO
+# Add fold_diacritics to FTSDatabase
+# Add min_score to FTSFilter
 
 # Anchor characters in a name
 INITIALS = string.ascii_uppercase + string.digits
@@ -32,10 +33,10 @@ MATCH_ALLCHARS = 64
 MATCH_ALL = 127
 
 
-class ScriptFilter(object):
-    def __init__(self, protocol, data):
-        self.protocol = protocol
-        self.data = data
+def filter(query, key=lambda x: x, ascending=False,
+               include_score=False, min_score=0, max_results=0,
+               match_on=MATCH_ALL, fold_diacritics=True):
+        pass
 
 
 class FTSFilter(object):
@@ -45,8 +46,9 @@ class FTSFilter(object):
     def filter(self, query, key=lambda x: x,
                include_score=False, max_results=0, fold_diacritics=True,
                ascending=True, match_on=MATCH_ALL):
-        database = self._memoize_database(self.data)
-        fts = FTSDatabase(database)
+        db_file = self._memoize_database(self.data)
+        fts = FTSDatabase(self.data, db_file)
+        fts.tokenizer = 'porter'
 
         results = {}
         matched = []
