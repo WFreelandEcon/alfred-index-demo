@@ -91,10 +91,9 @@ class FTSDatabase(object):
                '(SELECT rank(matchinfo({table})) '
                'AS score, {columns} '
                'FROM {table} '
-               'WHERE {table} MATCH "{query}") '
+               'WHERE {table} MATCH ?) '
                'ORDER BY score DESC;').format(table=self.table,
-                                              columns=self.fields,
-                                              query=query)
+                                              columns=self.fields)
         # `sqlite3.Row` provides both index-based and
         # case-insensitive name-based access to columns
         # with almost no memory overhead
@@ -103,7 +102,7 @@ class FTSDatabase(object):
             cur = self.con.cursor()
             ranks = ranks or [1.0] * len(self.fields)
             self.con.create_function('rank', 1, self.make_rank_func(ranks))
-            cur.execute(sql)
+            cur.execute(sql, (query,))
             return cur.fetchall()
 
     ## Helper Methods  --------------------------------------------------------
