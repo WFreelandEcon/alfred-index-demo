@@ -4,25 +4,27 @@ from __future__ import print_function, unicode_literals
 
 import sqlite3
 import struct
-import os.path
+from os import path
 
 
 class FTSDatabase(object):
-    def __init__(self, path=None):
-        self._path = path or ':memory:'
+    def __init__(self, data, file=None):
+        self.data = data
+        self._file = file or ':memory:'
         self._table = 'filter'
         self._fields = 'id, data'
-        self.con = sqlite3.connect(self._path)
+        self._tokenizer = 'simple'
+        self.con = sqlite3.connect(self._file)
 
     # Properties  -------------------------------------------------------------
 
     @property
-    def path(self):
-        return self._path
+    def file(self):
+        return self._file
 
-    @path.setter
-    def path(self, value):
-        self._path = value
+    @file.setter
+    def file(self, value):
+        self._file = value
 
     @property
     def table(self):
@@ -40,26 +42,36 @@ class FTSDatabase(object):
     def fields(self, value):
         self._fields = value
 
+    @property
+    def tokenizer(self):
+        return self._tokenizer
+
+    @tokenizer.setter
+    def tokenizer(self, value):
+        self._tokenizer = value
+
     # API  --------------------------------------------------------------------
 
-    def create(self, data, table=None, fields=None):
+    def create(self, table=None, fields=None, tokenizer=None):
         # Allow for dynamic table and field names
         self.table = table or self._table
         self.fields = fields or self._fields
+        self.tokenizer = tokenizer or self._tokenizer
 
         with self.con:
             cur = self.con.cursor()
             # Create virtual table if new database
-            if not os.path.exists(self.path):
+            if not path.exists(self.file) or path.getsize(self.file) == 0:
                 print('creating...')
                 sql = ('CREATE VIRTUAL TABLE {table} '
-                       'USING fts3({columns})')
+                       'USING fts3({columns}, tokenize={tokenizer})')
                 sql = sql.format(table=self.table,
-                                 columns=self.fields)
+                                 columns=self.fields,
+                                 tokenizer=self.tokenizer)
                 self._execute(cur, sql)
                 # Fill and index virtual table
                 sql = None
-                for i, item in enumerate(data):
+                for i, item in enumerate(self.data):
                     values = self._prepare_values(i, item)
                     if not sql:
                         sql = ('INSERT OR IGNORE INTO {table} '
@@ -70,6 +82,9 @@ class FTSDatabase(object):
                     cur.execute(sql, values)
 
     def search(self, query, ranks=None):
+        # If user runs `search` first, bootstrap database
+        # with default `table`, `fields`, and `tokenizer`.
+        self.create()
         # nested SELECT to keep from calling the rank function
         # multiple times per row.
         sql = ('SELECT * FROM '
@@ -80,8 +95,9 @@ class FTSDatabase(object):
                'ORDER BY score DESC;').format(table=self.table,
                                               columns=self.fields,
                                               query=query)
-        # `Row` provides both index-based and case-insensitive name-based access
-        # to columns with almost no memory overhead
+        # `sqlite3.Row` provides both index-based and
+        # case-insensitive name-based access to columns
+        # with almost no memory overhead
         self.con.row_factory = sqlite3.Row
         with self.con:
             cur = self.con.cursor()
